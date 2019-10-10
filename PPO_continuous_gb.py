@@ -72,20 +72,6 @@ class ActorCritic(nn.Module):
 
         return action.detach()
 
-    def evaluate(self, state, action):
-        action_mean = torch.squeeze(self.actor(state))
-
-        action_var = self.action_var.expand_as(action_mean)
-        cov_mat = torch.diag_embed(action_var).to(device)
-
-        dist = MultivariateNormal(action_mean, cov_mat)
-
-        action_logprobs = dist.log_prob(torch.squeeze(action))
-        dist_entropy = dist.entropy()
-        state_value = self.critic(state)
-
-        return action_logprobs, torch.squeeze(state_value), dist_entropy
-
     def process(self, states, noises):
         # generate the current mean value vector
         action_means = self.actor(states)
@@ -125,7 +111,7 @@ class PPO:
         # define control variate
         self.control_variate = cv.ControlVariate()
         # add our initial base function
-        self.control_variate.add_base_func(func=cv.BaseFunc(28, 30), weight=1.0)
+        self.control_variate.add_base_func(func=cv.BaseFunc(28, 35), weight=1.0)
 
     def select_action(self, state, memory):
         state = torch.FloatTensor(state.reshape(1, -1)).to(device)
@@ -144,6 +130,7 @@ class PPO:
         # Normalizing the rewards:
         rewards = torch.tensor(rewards).to(device)
         rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-5)
+        rewards = rewards.unsqueeze(-1)
 
         # convert list to tensor
         old_states = torch.squeeze(torch.stack(memory.states).to(device)).detach()
@@ -171,7 +158,7 @@ class PPO:
 
             # calculate two surrogates
             surr1 = ratios * (advantages - cv_phi.detach()) + ratios.detach() * cv_f_grad_phi
-            surr2 = clipped_ratios * (advantages - cv_phi.detach()) + ratios.detach() * cv_f_grad_phi
+            surr2 = clipped_ratios * (advantages - cv_phi.detach()) + clipped_ratios.detach() * cv_f_grad_phi
 
             # total loss
             loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
