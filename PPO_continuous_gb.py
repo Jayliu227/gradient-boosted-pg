@@ -87,16 +87,22 @@ class ActorCritic(nn.Module):
         return action_logprobs, torch.squeeze(state_value), dist_entropy
 
     def process(self, states, noises):
+        # generate the current mean value vector
         action_means = self.actor(states)
+        # construct the covariance matrices
         cov_mat = torch.diag_embed(self.action_var).to(device)
+        # construct the distribution out of the mean vectors and covariance matrices
         dist = MultivariateNormal(action_means, cov_mat)
-
+        # generate the action by the noises
         actions = action_means + self.action_std * noises
+        # get the log probability
         action_logprobs = dist.log_prob(actions)
-
+        # get the entropy
         dist_entropy = dist.entropy()
+        # get our V value
         state_values = self.critic(states)
 
+        # make sure all these values are in batch format
         return actions, action_logprobs.unsqueeze(-1), state_values, dist_entropy.unsqueeze(-1)
 
 
@@ -147,23 +153,27 @@ class PPO:
 
         # compute phi(s, a) and grad_phi w.r.t actions, cv_phi [batch, 1], cv_grad_phi [batch, action_dim]
         cv_phi, cv_grad_phi = self.control_variate.get_value(old_states, old_actions)
-        # compute f * grad_phi [batch, action_dim] dot [batch, action_dim] = [batch, 1]
-        cv_f_grad_phi = torch.bmm(old_actions.unsqueeze(1), cv_grad_phi.unsqueeze(-1)).squeeze(-1)
 
         # Optimize policy for K epochs:
         for _ in range(self.K_epochs):
             # Evaluating old actions and values :
-            logprobs, state_values, dist_entropy = self.policy.evaluate(old_states, old_actions)
+            actions, logprobs, state_values, dist_entropy = self.policy.process(old_states, old_noises)
+
+            # compute f * grad_phi = [batch, action_dim] dot [batch, action_dim] = [batch, 1]
+            cv_f_grad_phi = torch.bmm(actions.unsqueeze(1), cv_grad_phi.detach().unsqueeze(-1)).squeeze(-1)
 
             # Finding the ratio (pi_theta / pi_theta_old):
             ratios = torch.exp(logprobs - old_logprobs.detach())
             clipped_ratios = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
 
+            # advantage function
             advantages = rewards - state_values.detach()
 
-            surr1 = ratios * advantages  # - cv_phi)  # + ratios.detach() * cv_f_grad_phi
-            surr2 = clipped_ratios * advantages  # - cv_phi)  # + ratios.detach() * cv_f_grad_phi
+            # calculate two surrogates
+            surr1 = ratios * (advantages - cv_phi.detach()) + ratios.detach() * cv_f_grad_phi
+            surr2 = clipped_ratios * (advantages - cv_phi.detach()) + ratios.detach() * cv_f_grad_phi
 
+            # total loss
             loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
 
             # take gradient step

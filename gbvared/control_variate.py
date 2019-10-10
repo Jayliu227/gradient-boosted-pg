@@ -20,10 +20,7 @@ class ControlVariate:
                        [batch_size, action_dim]
         """
 
-        # remember to detach our input
-        states = states.detach().clone()
-        actions = actions.detach().clone()
-
+        # init them to be zero
         values = torch.zeros((actions.shape[0], 1))
         action_grads = torch.zeros(actions.shape)
 
