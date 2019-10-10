@@ -60,7 +60,18 @@ class BaseFunc(nn.Module):
         )
 
     def forward(self, states, actions):
-        # for now it is simply a zero function
         x = torch.cat([states, actions], dim=1)
         x = self.layers(x)
+        return x
+
+
+class ZeroFunc(nn.Module):
+    def __init__(self):
+        super(ZeroFunc, self).__init__()
+        pass
+
+    def forward(self, states, actions):
+        # for now it is simply a zero function
+        x = torch.cat([states, actions], dim=1) * 0.0
+        x = torch.sum(x, dim=1).unsqueeze(-1)
         return x

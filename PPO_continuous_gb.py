@@ -74,7 +74,7 @@ class ActorCritic(nn.Module):
         # generate the current mean value vector
         action_means = self.actor(states)
         # construct the covariance matrices
-        cov_mat = torch.diag_embed(self.action_var).to(device)
+        cov_mat = torch.diag_embed(self.action_var)
         # construct the distribution out of the mean vectors and covariance matrices
         dist = MultivariateNormal(action_means, cov_mat)
         # generate the action by the noises
@@ -109,7 +109,7 @@ class PPO:
         # define control variate
         self.control_variate = cv.ControlVariate()
         # add our initial base function
-        self.control_variate.add_base_func(func=cv.BaseFunc(28, 35), weight=1.0)
+        self.control_variate.add_base_func(func=cv.ZeroFunc(), weight=1.0)
 
     def select_action(self, state, memory):
         state = torch.FloatTensor(state.reshape(1, -1))
