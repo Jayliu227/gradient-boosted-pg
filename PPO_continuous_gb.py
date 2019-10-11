@@ -53,6 +53,7 @@ class ActorCritic(nn.Module):
 
     def act(self, state, memory):
         action_mean = self.actor(state)
+
         cov_mat = torch.diag_embed(self.action_var)
 
         dist = MultivariateNormal(action_mean, cov_mat)
@@ -73,20 +74,21 @@ class ActorCritic(nn.Module):
         # generate the current mean value vector
         action_means = self.actor(states)
         # construct the covariance matrices
-        cov_mat = torch.diag_embed(self.action_var)
+        action_var = self.action_var.expand_as(torch.squeeze(action_means))
+        cov_mat = torch.diag_embed(action_var)
         # construct the distribution out of the mean vectors and covariance matrices
-        dist = MultivariateNormal(action_means, cov_mat)
+        dist = MultivariateNormal(torch.squeeze(action_means), cov_mat)
         # generate the action by the noises
         actions = action_means + self.action_std * noises
         # get the log probability
-        action_logprobs = dist.log_prob(actions)
+        action_logprobs = dist.log_prob(torch.squeeze(actions))
         # get the entropy
         dist_entropy = dist.entropy()
         # get our V value
         state_values = self.critic(states)
 
         # make sure all these values are in batch format
-        return actions, action_logprobs.unsqueeze(-1), state_values, dist_entropy.unsqueeze(-1)
+        return actions, action_logprobs, torch.squeeze(state_values), dist_entropy
 
 
 class PPO:
@@ -127,7 +129,6 @@ class PPO:
         # Normalizing the rewards:
         rewards = torch.tensor(rewards)
         rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-5)
-        rewards = rewards.unsqueeze(-1)
 
         # convert list to tensor
         old_states = torch.squeeze(torch.stack(memory.states)).detach()
