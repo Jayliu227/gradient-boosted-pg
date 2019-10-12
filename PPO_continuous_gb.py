@@ -13,7 +13,6 @@ class Memory:
         self.states = []
         self.logprobs = []
         self.rewards = []
-        self.noises = []
         self.is_terminals = []
 
     def clear_memory(self):
@@ -21,7 +20,6 @@ class Memory:
         del self.states[:]
         del self.logprobs[:]
         del self.rewards[:]
-        del self.noises[:]
         del self.is_terminals[:]
 
 
@@ -65,23 +63,27 @@ class ActorCritic(nn.Module):
 
         memory.states.append(state)
         memory.actions.append(action)
-        memory.noises.append(noise)
         memory.logprobs.append(action_logprob)
 
         return action.detach()
 
-    def process(self, states, noises):
+    def process(self, states, old_actions):
         # generate the current mean value vector
         action_means = self.actor(states)
+
         # construct the covariance matrices
         action_var = self.action_var.expand_as(torch.squeeze(action_means))
         cov_mat = torch.diag_embed(action_var)
         # construct the distribution out of the mean vectors and covariance matrices
         dist = MultivariateNormal(torch.squeeze(action_means), cov_mat)
+
+        # calculate the noise to make sure that the generated actions are the same as old actions
+        noises = old_actions - action_means.detach()
         # generate the action by the noises
-        actions = action_means + self.action_std * noises
+        actions = action_means + noises.detach()
+
         # get the log probability
-        action_logprobs = dist.log_prob(torch.squeeze(actions))
+        action_logprobs = dist.log_prob(torch.squeeze(old_actions))
         # get the entropy
         dist_entropy = dist.entropy()
         # get our V value
@@ -134,7 +136,6 @@ class PPO:
         old_states = torch.squeeze(torch.stack(memory.states)).detach()
         old_actions = torch.squeeze(torch.stack(memory.actions)).detach()
         old_logprobs = torch.squeeze(torch.stack(memory.logprobs)).detach()
-        old_noises = torch.squeeze(torch.stack(memory.noises)).detach()
 
         # compute phi(s, a) and grad_phi w.r.t actions, cv_phi [batch, 1], cv_grad_phi [batch, action_dim]
         cv_phi, cv_grad_phi = self.control_variate.get_value(old_states, old_actions)
@@ -142,7 +143,7 @@ class PPO:
         # Optimize policy for K epochs:
         for _ in range(self.K_epochs):
             # Evaluating old actions and values :
-            actions, logprobs, state_values, dist_entropy = self.policy.process(old_states, old_noises)
+            actions, logprobs, state_values, dist_entropy = self.policy.process(old_states, old_actions)
 
             # compute f * grad_phi = [batch, action_dim] dot [batch, action_dim] = [batch, 1]
             cv_f_grad_phi = torch.bmm(actions.unsqueeze(1), cv_grad_phi.detach().unsqueeze(-1)).squeeze(-1)
@@ -181,7 +182,7 @@ def main():
 
     update_timestep = 4000  # update policy every n timesteps
     action_std = 0.5  # constant std for action distribution (Multivariate Normal)
-    K_epochs = 80  # update policy for K epochs
+    K_epochs = 20  # update policy for K epochs
     eps_clip = 0.2  # clip parameter for PPO
     gamma = 0.99  # discount factor
 
