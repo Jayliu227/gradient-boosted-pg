@@ -76,3 +76,26 @@ def gradient_norm(model):
 
 def sample_action(action_means, action_std):
     return action_means + action_std * torch.randn(action_means.shape)
+
+
+def save_gradients_to_files(gradient_name, model):
+    assert gradient_name is not None
+    gradients = []
+    for params in model.parameters():
+        if params.grad is None:
+            print('Error: empty gradient.')
+            return
+        gradients.append(params.grad.data.view(-1))
+
+    torch.save(torch.cat(gradients), '%s.pt' % gradient_name)
+
+
+def load_gradients_from_file(gradient_name):
+    assert gradient_name is not None
+    return torch.load('%s.pt' % gradient_name)
+
+
+def compare_gradients(grad_1, grad_2):
+    grad_1 = load_gradients_from_file(grad_1)
+    grad_2 = load_gradients_from_file(grad_2)
+    return (grad_1 - grad_2).norm()
