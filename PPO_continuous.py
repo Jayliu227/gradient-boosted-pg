@@ -4,6 +4,8 @@ from torch.distributions import MultivariateNormal
 import gym
 import numpy as np
 
+from gbvared import utils
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
@@ -157,7 +159,7 @@ def main():
     lr = 0.0003  # parameters for Adam optimizer
     betas = (0.9, 0.999)
 
-    random_seed = None
+    random_seed = 1234
     #############################################
 
     # creating environment
@@ -213,13 +215,15 @@ def main():
             break
 
         # save every 500 episodes
-        if i_episode % 500 == 0:
-            torch.save(ppo.policy.state_dict(), './PPO_continuous_{}.pth'.format(env_name))
+        # if i_episode % 500 == 0:
+        #     torch.save(ppo.policy.state_dict(), './PPO_continuous_{}.pth'.format(env_name))
 
         # logging
         if i_episode % log_interval == 0:
             avg_length = int(avg_length / log_interval)
             running_reward = int((running_reward / log_interval))
+
+            utils.write_to_file_data('reward_records_original.txt', running_reward)
 
             print('Episode {} \t Avg length: {} \t Avg reward: {}'.format(i_episode, avg_length, running_reward))
             running_reward = 0

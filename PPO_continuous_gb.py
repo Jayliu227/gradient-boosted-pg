@@ -121,7 +121,7 @@ class PPO:
 
     def select_action(self, state, memory):
         state = torch.FloatTensor(state.reshape(1, -1))
-        return self.policy_old.act(state, memory).cpu().data.numpy().flatten()
+        return self.policy_old.act(state, memory).data.numpy().flatten()
 
     def update(self, memory):
         # Monte Carlo estimate of rewards:
@@ -157,7 +157,7 @@ class PPO:
                     f_grad_w = mu_grad_w + (std * noise)_grad_w = mu_grad_w
                     pi(a|s) = C * e^-(1/2(a - mu)^T*SIGMA^-1*(a - mu))
                     log_pi(a|s) = logC - (1/2) * (a - mu)^T*SIGMA^-1*(a - mu)
-                    ll_grad_mu = SIGMA^-1/2 * (a - mu)
+                    ll_grad_mu = SIGMA^-1 * (a - mu)
                     ratio = exp(logprobs - old_logprobs)
                 
                 loss = mu dot (ratio * (ll_grad_mu * (A - phi) + phi_grad_action)).detach()
@@ -193,8 +193,8 @@ class PPO:
             surr2 = clipped_ratios * (ll_grad_mu * (advantages - use_cv * phi_value) + use_cv * phi_grad_action)
 
             # dot product with the action mean
-            surr1 = torch.bmm(action_means.unsqueeze(1), surr1.unsqueeze(-1).detach()).squeeze(-1)
-            surr2 = torch.bmm(action_means.unsqueeze(1), surr2.unsqueeze(-1).detach()).squeeze(-1)
+            surr1 = (action_means * surr1).sum(1)
+            surr2 = (action_means * surr2).sum(1)
 
             # total loss
             loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
@@ -226,7 +226,7 @@ def main():
     lr = 0.0003  # parameters for Adam optimizer
     betas = (0.9, 0.999)
 
-    random_seed = None
+    random_seed = 1234
     #############################################
 
     # creating environment
@@ -290,7 +290,7 @@ def main():
             avg_length = int(avg_length / log_interval)
             running_reward = int((running_reward / log_interval))
 
-            utils.write_to_file_data('reward_records.txt', running_reward)
+            utils.write_to_file_data('reward_records_gb.txt', running_reward)
 
             print('Episode {} \t Avg length: {} \t Avg reward: {}'.format(i_episode, avg_length, running_reward))
             running_reward = 0

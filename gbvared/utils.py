@@ -39,7 +39,7 @@ def write_to_file_data(file_name, data):
     assert file_name is not None
     # create the file if not yet opened
     file = open(file_name, 'a+')
-    file.write('%.5f\n' % data)
+    file.write('%d\n' % data)
     file.close()
 
 
