@@ -106,7 +106,7 @@ class PPO:
         state = torch.FloatTensor(state.reshape(1, -1)).to(device)
         return self.policy_old.act(state, memory).cpu().data.numpy().flatten()
 
-    def update(self, memory):
+    def update(self, memory, update_times):
         # Monte Carlo estimate of rewards:
         rewards = []
         discounted_reward = 0
@@ -125,7 +125,7 @@ class PPO:
         old_actions = torch.squeeze(torch.stack(memory.actions).to(device)).detach()
         old_logprobs = torch.squeeze(torch.stack(memory.logprobs)).to(device).detach()
 
-        use_ours = False
+        use_ours = True
 
         i = 0
 
@@ -135,17 +135,22 @@ class PPO:
             action_means, logprobs, state_values, dist_entropy = self.policy.evaluate(old_states, old_actions)
 
             if use_ours:
-                ratios = torch.exp(logprobs - old_logprobs.detach()).unsqueeze(-1)
+                ratios = torch.exp(logprobs - old_logprobs.detach())
+                clip_ratios = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
+
                 ll_grad_mu = (old_actions - action_means) / self.action_var
-                advantages = rewards - state_values.detach()
 
-                surr1 = ratios * (advantages.unsqueeze(-1) * ll_grad_mu)
-                surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * (advantages.unsqueeze(-1) * ll_grad_mu)
+                advantages = rewards - state_values
 
-                surr1 = (action_means * surr1.detach()).sum(1)
-                surr2 = (action_means * surr2.detach()).sum(1)
+                surr = ratios.unsqueeze(-1) * (advantages.unsqueeze(-1) * ll_grad_mu)
+                surr = (action_means * surr.detach()).sum(1)
 
+                clipped = ((ratios * advantages) <= (clip_ratios * advantages)).float()
+
+                # print("ours: ", clipped.view(-1).sum())
                 gradient_name = 'our_grad'
+
+                loss = -surr * clipped.detach() + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
             else:
                 ratios = torch.exp(logprobs - old_logprobs.detach())
                 advantages = rewards - state_values.detach()
@@ -154,17 +159,28 @@ class PPO:
 
                 gradient_name = 'original_grad'
 
-            loss = 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
-            loss -= (surr1 * (surr1 <= surr2).float().detach()).squeeze(-1)
+                # print("theirs: ", (surr1 <= surr2).float().sum())
+
+                loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
+
+            # index = 3398
+            #
+            # print(surr1[index], surr2[index])
+            # print((surr1[index] - surr2[index]).norm())
+            # # indices = []
+            # # for idx, i in enumerate((surr1 <= surr2).float()):
+            # #     if i == 0:
+            # #         indices.append(idx)
+            # #
+            # # print(indices)
 
             # take gradient step
             self.optimizer.zero_grad()
             loss.mean().backward()
-
             # when i = 2, the norm difference is 0.0052
-            if i == 1:
-                utils.save_gradients_to_files(gradient_name, self.policy.actor)
-                sys.exit()
+            # if i == 79 and update_times == 0:
+            #     utils.save_gradients_to_files(gradient_name, self.policy.actor)
+            #     sys.exit()
             self.optimizer.step()
             i += 1
 
@@ -213,6 +229,8 @@ def main():
     avg_length = 0
     time_step = 0
 
+    update_times = 0
+
     # training loop
     for i_episode in range(1, max_episodes + 1):
         state = env.reset()
@@ -228,7 +246,8 @@ def main():
 
             # update if its time
             if time_step % update_timestep == 0:
-                ppo.update(memory)
+                ppo.update(memory, update_times)
+                update_times += 1
                 memory.clear_memory()
                 time_step = 0
             running_reward += reward
