@@ -182,20 +182,20 @@ class PPO:
             ll_grad_mu = (old_actions - action_means) / self.action_var
 
             # finding the ratio (pi_theta / pi_theta_old):
-            ratios = torch.exp(logprobs - old_logprobs).unsqueeze(-1)
+            ratios = torch.exp(logprobs - old_logprobs)
             clipped_ratios = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
 
             # calculate advantages
-            advantages = (rewards - state_values).unsqueeze(-1)
+            advantages = rewards - state_values
 
             # calculate surrogate loss
-            surr = ratios * (ll_grad_mu * (advantages - use_cv * phi_value) + use_cv * phi_grad_action)
+            surr = ratios.unsqueeze(-1) * (ll_grad_mu * (advantages.unsqueeze(-1) - use_cv * phi_value) + use_cv * phi_grad_action)
 
             # dot product with the action mean
             surr = (action_means * surr.detach()).sum(1)
 
             # clip off gradients according to PPO
-            clipped = ((ratios * advantages) <= (clipped_ratios * advantages)).float().squeeze(-1)
+            clipped = ((ratios * advantages) <= (clipped_ratios * advantages)).float()
 
             # total loss
             loss = -surr * clipped.detach() + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
@@ -220,7 +220,7 @@ def main():
 
     update_timestep = 4000  # update policy every n timesteps
     action_std = 0.5  # constant std for action distribution (Multivariate Normal)
-    K_epochs = 20  # update policy for K epochs
+    K_epochs = 80  # update policy for K epochs
     eps_clip = 0.2  # clip parameter for PPO
     gamma = 0.99  # discount factor
 
