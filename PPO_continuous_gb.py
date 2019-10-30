@@ -145,7 +145,7 @@ class PPO:
         # compute phi(s, a) and grad_phi w.r.t actions
         phi_value, phi_grad_action = self.control_variate.get_value(old_states, old_actions)
 
-        use_cv = 1.
+        use_cv = 0.
 
         # Optimize policy for K epochs:
         for _ in range(self.K_epochs):
@@ -189,15 +189,16 @@ class PPO:
             advantages = (rewards - state_values).unsqueeze(-1)
 
             # calculate surrogate loss
-            surr1 = ratios * (ll_grad_mu * (advantages - use_cv * phi_value) + use_cv * phi_grad_action)
-            surr2 = clipped_ratios * (ll_grad_mu * (advantages - use_cv * phi_value) + use_cv * phi_grad_action)
+            surr = ratios * (ll_grad_mu * (advantages - use_cv * phi_value) + use_cv * phi_grad_action)
 
             # dot product with the action mean
-            surr1 = (action_means * surr1).sum(1)
-            surr2 = (action_means * surr2).sum(1)
+            surr = (action_means * surr.detach()).sum(1)
+
+            # clip off gradients according to PPO
+            clipped = ((ratios * advantages) <= (clipped_ratios * advantages)).float().squeeze(-1)
 
             # total loss
-            loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
+            loss = -surr * clipped.detach() + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
 
             # take gradient step
             self.optimizer.zero_grad()
