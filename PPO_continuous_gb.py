@@ -154,7 +154,7 @@ class PPO:
 
         # we only add new base functions during the first 30 updates
         if update_time < 30:
-            T_epochs = 40
+            T_epochs = 1000
 
             # prepare residuals for each transition
             g = torch.Tensor(
@@ -172,14 +172,20 @@ class PPO:
 
             # Optimize control variant for T epochs:
             new_phi = cv.BaseFunc(self.state_action_dim, 64)
-            phi_optim = torch.optim.Adam(new_phi.parameters(), lr=self.lr, betas=self.betas)
+            phi_optim = torch.optim.Adam(new_phi.parameters(), lr=0.5, betas=self.betas)
             step_size = 1.0
+
+            # FIXME: the outputs of the NN end up being the same regardless of the input
+            # and it is exactly the mean of g
+
             for _ in range(T_epochs):
                 new_phi_values = new_phi.forward(old_states, old_actions)
                 loss = self.MseLoss(g, step_size * new_phi_values)
                 phi_optim.zero_grad()
                 loss.backward()
                 phi_optim.step()
+
+            print(loss)
 
             # update our phi
             self.control_variate.add_base_func(new_phi, step_size)
@@ -235,9 +241,7 @@ class PPO:
             surr = (action_means * surr.detach()).sum(1)
 
             # clip off gradients according to PPO
-            r1 = ratios * (advantages - phi_value.squeeze(-1))
-            r2 = clipped_ratios * (advantages - phi_value.squeeze(-1))
-            clipped = (r1 <= r2).float()
+            clipped = ((ratios * advantages) <= (clipped_ratios * advantages)).float()
 
             # total loss
             loss = -surr * clipped.detach() + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy

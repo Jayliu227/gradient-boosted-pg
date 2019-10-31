@@ -53,12 +53,13 @@ class BaseFunc(nn.Module):
     def __init__(self, input_dim, hidden_dim):
         super(BaseFunc, self).__init__()
         self.layers = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.Tanh(),
+            nn.Linear(input_dim, hidden_dim * 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, 1),
-            nn.Tanh()
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1)
         )
 
     def forward(self, states, actions):

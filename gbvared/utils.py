@@ -59,7 +59,7 @@ def calculate_function_grad(model, optimizer, phi, phi_grad_action, state, actio
     # (3)
     action_mean = model.actor(state)
     optimizer.zero_grad()
-    (action_mean * phi_grad_action).sum().backward()
+    (action_mean * phi_grad_action.detach()).sum().backward()
     f_compensate = flatten_grad(model.actor)
 
     return 2.0 * torch.dot(f_score * f_advantage + f_compensate, f_score - f_compensate)
