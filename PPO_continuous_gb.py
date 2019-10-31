@@ -104,7 +104,12 @@ class PPO:
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.K_epochs = K_epochs
-        self.action_var = action_std * action_std
+        self.action_var = torch.full((action_dim,), action_std * action_std)
+        self.cov_mat = torch.diag_embed(self.action_var)
+        self.state_action_dim = state_dim + action_dim
+
+        self.lr = lr
+        self.betas = betas
 
         self.policy = ActorCritic(state_dim, action_dim, action_std)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr, betas=betas)
@@ -123,7 +128,7 @@ class PPO:
         state = torch.FloatTensor(state.reshape(1, -1))
         return self.policy_old.act(state, memory).data.numpy().flatten()
 
-    def update(self, memory):
+    def update(self, memory, update_time):
         # Monte Carlo estimate of rewards:
         rewards = []
         discounted_reward = 0
@@ -145,7 +150,41 @@ class PPO:
         # compute phi(s, a) and grad_phi w.r.t actions
         phi_value, phi_grad_action = self.control_variate.get_value(old_states, old_actions)
 
-        use_cv = 0.
+        use_cv = 1.
+
+        # we only add new base functions during the first 30 updates
+        if update_time < 30:
+            T_epochs = 40
+
+            # prepare residuals for each transition
+            g = torch.Tensor(
+                [utils.calculate_function_grad(
+                    self.policy,
+                    self.optimizer,
+                    phi_value[i],
+                    phi_grad_action[i],
+                    old_states[i],
+                    old_actions[i],
+                    rewards[i],
+                    self.cov_mat
+                ) for i in range(len(rewards))]
+            ).unsqueeze(-1).detach()
+
+            # Optimize control variant for T epochs:
+            new_phi = cv.BaseFunc(self.state_action_dim, 64)
+            phi_optim = torch.optim.Adam(new_phi.parameters(), lr=self.lr, betas=self.betas)
+            step_size = 1.0
+            for _ in range(T_epochs):
+                new_phi_values = new_phi.forward(old_states, old_actions)
+                loss = self.MseLoss(g, step_size * new_phi_values)
+                phi_optim.zero_grad()
+                loss.backward()
+                phi_optim.step()
+
+            # update our phi
+            self.control_variate.add_base_func(new_phi, step_size)
+
+        phi_value, phi_grad_action = self.control_variate.get_value(old_states, old_actions)
 
         # Optimize policy for K epochs:
         for _ in range(self.K_epochs):
@@ -189,13 +228,16 @@ class PPO:
             advantages = rewards - state_values
 
             # calculate surrogate loss
-            surr = ratios.unsqueeze(-1) * (ll_grad_mu * (advantages.unsqueeze(-1) - use_cv * phi_value) + use_cv * phi_grad_action)
+            surr = ratios.unsqueeze(-1) * (
+                    ll_grad_mu * (advantages.unsqueeze(-1) - use_cv * phi_value) + use_cv * phi_grad_action)
 
             # dot product with the action mean
             surr = (action_means * surr.detach()).sum(1)
 
             # clip off gradients according to PPO
-            clipped = ((ratios * advantages) <= (clipped_ratios * advantages)).float()
+            r1 = ratios * (advantages - phi_value.squeeze(-1))
+            r2 = clipped_ratios * (advantages - phi_value.squeeze(-1))
+            clipped = (r1 <= r2).float()
 
             # total loss
             loss = -surr * clipped.detach() + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
@@ -249,6 +291,7 @@ def main():
     running_reward = 0
     avg_length = 0
     time_step = 0
+    update_time = 0
 
     # training loop
     for i_episode in range(1, max_episodes + 1):
@@ -265,8 +308,9 @@ def main():
 
             # update if its time
             if time_step % update_timestep == 0:
-                ppo.update(memory)
+                ppo.update(memory, update_time)
                 memory.clear_memory()
+                update_time += 1
                 time_step = 0
             running_reward += reward
             if render:

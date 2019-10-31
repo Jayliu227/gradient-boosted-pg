@@ -55,6 +55,8 @@ class BaseFunc(nn.Module):
         self.layers = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.Tanh(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Tanh(),
             nn.Linear(hidden_dim, 1),
             nn.Tanh()
         )

@@ -1,6 +1,8 @@
 import pandas as pd
 import os
 import torch
+import sys
+from torch.distributions import MultivariateNormal
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -33,6 +35,47 @@ class Plotter:
 
         if save:
             sns_plot.get_figure().savefig(os.path.join(path, file_name))
+
+
+def calculate_function_grad(model, optimizer, phi, phi_grad_action, state, action, reward, cov_mat):
+    """
+        (1) f_score = ll_grad_w
+        (2) f_advantage = A - phi
+        (3) f_compensate = f_grad_w * phi_grad_action
+
+        g_i = 2 * <f_score * f_advantage + f_compensate, f_score - f_compensate>
+    """
+    # (1)
+    action_mean = model.actor(state)
+    dist = MultivariateNormal(action_mean, cov_mat)
+    ll = dist.log_prob(action)
+    optimizer.zero_grad()
+    ll.backward()
+    f_score = flatten_grad(model.actor)
+
+    # (2)
+    f_advantage = model.critic(state) - reward - phi
+
+    # (3)
+    action_mean = model.actor(state)
+    optimizer.zero_grad()
+    (action_mean * phi_grad_action).sum().backward()
+    f_compensate = flatten_grad(model.actor)
+
+    return 2.0 * torch.dot(f_score * f_advantage + f_compensate, f_score - f_compensate)
+
+
+def flatten_grad(model):
+    """
+    Given a model and return the flatten tensor of the gradients of the parameters
+    """
+    gradients = []
+    for params in model.parameters():
+        if params is None:
+            print('Parameters do not have gradients.')
+            sys.exit()
+        gradients.append(params.grad.data.view(-1))
+    return torch.cat(gradients)
 
 
 def write_to_file_data(file_name, data):
