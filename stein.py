@@ -111,9 +111,6 @@ class PPO:
         self.policy = ActorCritic(state_dim, action_dim, action_std)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr, betas=betas)
 
-        self.policy_old = ActorCritic(state_dim, action_dim, action_std)
-        self.policy_old.load_state_dict(self.policy.state_dict())
-
         self.MseLoss = nn.MSELoss()
 
         # define control variate
@@ -123,7 +120,7 @@ class PPO:
 
     def select_action(self, state, memory):
         state = torch.FloatTensor(state.reshape(1, -1))
-        return self.policy_old.act(state, memory).data.numpy().flatten()
+        return self.policy.act(state, memory).data.numpy().flatten()
 
     def update(self, memory, update_time):
         # Monte Carlo estimate of rewards:
@@ -209,9 +206,6 @@ class PPO:
             self.optimizer.zero_grad()
             loss.mean().backward()
             self.optimizer.step()
-
-        # Copy new weights into old policy:
-        self.policy_old.load_state_dict(self.policy.state_dict())
 
 
 def main():
