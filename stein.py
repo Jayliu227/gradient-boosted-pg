@@ -15,6 +15,7 @@ class Memory:
         self.logprobs = []
         self.rewards = []
         self.is_terminals = []
+        self.means = []
 
     def clear_memory(self):
         del self.actions[:]
@@ -22,6 +23,7 @@ class Memory:
         del self.logprobs[:]
         del self.rewards[:]
         del self.is_terminals[:]
+        del self.means[:]
 
 
 class ActorCritic(nn.Module):
@@ -70,6 +72,7 @@ class ActorCritic(nn.Module):
         memory.states.append(state)
         memory.actions.append(action)
         memory.logprobs.append(action_logprob)
+        memory.means.append(action_mean)
 
         return action.detach()
 
@@ -94,7 +97,7 @@ class ActorCritic(nn.Module):
         state_values = self.critic(states)
 
         # make sure all these values are in batch format
-        return action_means, action_logprobs, torch.squeeze(state_values), dist_entropy
+        return action_means, action_logprobs, dist, torch.squeeze(state_values), dist_entropy
 
 
 class PPO:
@@ -106,12 +109,17 @@ class PPO:
         self.K_epochs = K_epochs
         self.action_var = torch.full((action_dim,), action_std * action_std)
         self.cov_mat = torch.diag_embed(self.action_var)
-        self.state_action_dim = state_dim + action_dim
+        self.state_dim = state_dim
+        self.action_dim = action_dim
 
         self.policy = ActorCritic(state_dim, action_dim, action_std)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr, betas=betas)
 
         self.MseLoss = nn.MSELoss()
+
+        self.beta = 1.0
+        self.eta = 50
+        self.kl_targ = 0.003
 
         # define control variate
         self.control_variate = cv.ControlVariate()
@@ -123,6 +131,8 @@ class PPO:
         return self.policy.act(state, memory).data.numpy().flatten()
 
     def update(self, memory, update_time):
+        assert self.K_epochs > 0
+
         # Monte Carlo estimate of rewards:
         rewards = []
         discounted_reward = 0
@@ -140,6 +150,10 @@ class PPO:
         old_states = torch.squeeze(torch.stack(memory.states)).detach()
         old_actions = torch.squeeze(torch.stack(memory.actions)).detach()
         old_logprobs = torch.squeeze(torch.stack(memory.logprobs)).detach()
+        old_means = torch.squeeze(torch.stack(memory.means)).detach()
+
+        # construct old distributions
+        old_dist = MultivariateNormal(old_means.detach(), self.cov_mat)
 
         # compute phi(s, a) and grad_phi w.r.t actions
         phi_value, phi_grad_action = self.control_variate.get_value(old_states, old_actions)
@@ -177,14 +191,16 @@ class PPO:
             """
 
             # Evaluating old actions and values
-            action_means, logprobs, state_values, dist_entropy = self.policy.process(old_states, old_actions)
+            action_means, logprobs, dist, state_values, dist_entropy = self.policy.process(old_states, old_actions)
+
+            # calculate KL between the old distributions and new distributions
+            kl = torch.distributions.kl_divergence(old_dist, dist).mean()
 
             # calculate the gradient of log likelihood of old actions w.r.t the action mean
             ll_grad_mu = (old_actions - action_means) / self.action_var
 
             # finding the ratio (pi_theta / pi_theta_old):
             ratios = torch.exp(logprobs - old_logprobs)
-            clipped_ratios = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
 
             # calculate advantages
             advantages = rewards - state_values
@@ -193,19 +209,31 @@ class PPO:
             surr = ratios.unsqueeze(-1) * (
                     ll_grad_mu * (advantages.unsqueeze(-1) - use_cv * phi_value) + use_cv * phi_grad_action)
 
-            # dot product with the action mean
-            surr = (action_means * surr.detach()).sum(1)
+            # dot product with the action mean to get our surrogate loss
+            loss1 = -(action_means * surr.detach()).sum(1).mean()
 
-            # clip off gradients according to PPO
-            clipped = ((ratios * advantages) <= (clipped_ratios * advantages)).float()
+            # critic loss
+            loss2 = self.MseLoss(state_values, rewards)
+
+            # kl loss
+            loss3 = kl * self.beta + self.eta * max(0, kl - 2.0 * self.kl_targ)**2
 
             # total loss
-            loss = -surr * clipped.detach() + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
+            loss = loss1 + 0.5 * loss2 + loss3 - 0.01 * dist_entropy.mean()
 
             # take gradient step
             self.optimizer.zero_grad()
-            loss.mean().backward()
+            loss.backward()
             self.optimizer.step()
+            # early stopping if KL diverges badly
+            if kl > self.kl_targ * 4:
+                break
+
+        # adaptive kl penalty:
+        if kl > self.kl_targ * 2:
+            self.beta = min(35., 1.5 * self.beta)
+        elif kl < self.kl_targ / 2:
+            self.beta = max(1 / 35, self.beta / 1.5)
 
 
 def main():
@@ -288,7 +316,7 @@ def main():
             avg_length = int(avg_length / log_interval)
             running_reward = int((running_reward / log_interval))
 
-            utils.write_to_file_data('reward_records_gb.txt', running_reward)
+            utils.write_to_file_data('reward_records_stein.txt', running_reward)
 
             print('Episode {} \t Avg length: {} \t Avg reward: {}'.format(i_episode, avg_length, running_reward))
             running_reward = 0
