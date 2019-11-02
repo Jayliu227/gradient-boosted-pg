@@ -123,8 +123,11 @@ class PPO:
 
         # define control variate
         self.control_variate = cv.ControlVariate()
+        # control base function
+        base_func = cv.BaseFunc(self.action_dim + self.state_dim, 64)
+        self.phi_optimizer = torch.optim.Adam(base_func.parameters(), lr=0.05, betas=(0.9, 0.999))
         # add our initial base function
-        self.control_variate.add_base_func(func=cv.ZeroFunc(), weight=1.0)
+        self.control_variate.add_base_func(func=base_func, weight=1.0)
 
     def select_action(self, state, memory):
         state = torch.FloatTensor(state.reshape(1, -1))
@@ -155,10 +158,28 @@ class PPO:
         # construct old distributions
         old_dist = MultivariateNormal(old_means.detach(), self.cov_mat)
 
+        use_cv = 1.
+        phi_obj = 'FitQ'
+        P_epochs = 1000
+
+        # update our phi
+        if use_cv > 0:
+            if phi_obj == 'FitQ':
+                for _ in range(P_epochs):
+                    phi_values = self.control_variate.bases[0].forward(old_states, old_actions)
+                    state_values = self.policy.critic.forward(old_states)
+                    advantages = rewards.unsqueeze(-1) - state_values
+
+                    loss = self.MseLoss(advantages.detach(), phi_values)
+
+                    self.phi_optimizer.zero_grad()
+                    loss.backward()
+                    self.phi_optimizer.step()
+            else:
+                raise NotImplementedError
+
         # compute phi(s, a) and grad_phi w.r.t actions
         phi_value, phi_grad_action = self.control_variate.get_value(old_states, old_actions)
-
-        use_cv = 1.
 
         # Optimize policy for K epochs:
         for _ in range(self.K_epochs):
