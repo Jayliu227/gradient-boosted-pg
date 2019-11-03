@@ -37,7 +37,7 @@ class Plotter:
             sns_plot.get_figure().savefig(os.path.join(path, file_name))
 
 
-def calculate_function_grad(model, optimizer, phi, phi_grad_action, state, action, reward, cov_mat):
+def calculate_function_grad(model, optimizer, phi_value, phi_grad_action, state, action, reward, cov_mat):
     """
         (1) f_score = ll_grad_w
         (2) f_advantage = A - phi
@@ -54,7 +54,7 @@ def calculate_function_grad(model, optimizer, phi, phi_grad_action, state, actio
     f_score = flatten_grad(model.actor)
 
     # (2)
-    f_advantage = model.critic(state) - reward - phi
+    f_advantage = model.critic(state) - reward - phi_value
 
     # (3)
     action_mean = model.actor(state)
