@@ -156,17 +156,29 @@ class PPO:
         # construct old distributions
         old_dist = MultivariateNormal(old_means.detach(), self.cov_mat)
 
-        use_cv = 1.                             # whether to use control variate
-        P_epochs = 1000                         # num of epochs to train the new base phi
-        grad_len = 10.0                         # make sure the gradient is not too big
-        step_size = 0.05                        # the step size of the functional gradient (gradient estimator)
-        phi_hidden_dim = 64                     # the hidden dimension of the new base phi
-        phi_lr = 0.03                           # learning rate of base phi
+        """
+        Hyper parameters for base phi:
+            use_cv                     # whether to use control variate
+            P_epochs                   # num of epochs to train the new base phi
+            grad_len                   # make sure the gradient is not too big
+            step_size                  # the step size of the functional gradient (gradient estimator)
+            phi_hidden_dim             # the hidden dimension of the new base phi
+            phi_lr, betas              # learning rate and betas for Adam of base phi
+            phi_max_bases              # max number of base funcs in phi
+            phi_start_using            # num of updates after which we start to use phi
+        """
+        use_cv = 1.
+        P_epochs = 1000
+        grad_len = 50.0
+        step_size = 0.5
+        phi_hidden_dim = 32
+        phi_lr = 0.03
         phi_betas = (0.9, 0.999)
-        start_using_phi = 10                    # num of updates after which we start to use phi
+        phi_max_bases = 30
+        phi_start_using = 5
 
         # update our phi using gradient boosting
-        if use_cv > 0:
+        if use_cv > 0 and update_time < phi_max_bases:
             # new base func
             phi = cv.BaseFunc(self.state_dim + self.action_dim, phi_hidden_dim)
             # load old func if possible
@@ -203,7 +215,7 @@ class PPO:
         phi_values, phi_grad_actions = self.control_variate.get_value(old_states, old_actions)
 
         # when phi is not trained enough, we don't use it
-        if update_time < start_using_phi:
+        if update_time < phi_start_using:
             use_cv = 0
 
         # Optimize policy for K epochs:
