@@ -168,14 +168,14 @@ class PPO:
             phi_start_using            # num of updates after which we start to use phi
         """
         use_cv = 1.
-        P_epochs = 1000
+        P_epochs = 8000
         grad_len = 50.0
-        step_size = 0.5
-        phi_hidden_dim = 32
-        phi_lr = 0.03
+        step_size = 0.005
+        phi_hidden_dim = 64
+        phi_lr = 0.002
         phi_betas = (0.9, 0.999)
         phi_max_bases = 30
-        phi_start_using = 5
+        phi_start_using = 0
 
         # update our phi using gradient boosting
         if use_cv > 0 and update_time < phi_max_bases:
@@ -196,10 +196,7 @@ class PPO:
                     self.policy, self.optimizer, old_phi_values[i], old_phi_grad_actions[i],
                     old_states[i], old_actions[i], rewards[i], self.cov_mat
                 ) for i in range(len(rewards))]
-            ).detach()
-
-            # normalize g, and convert it to batch format [batch_size, 1]
-            g = (g / g.norm() * grad_len).unsqueeze(-1)
+            ).unsqueeze(-1).detach()
 
             # approximate the functional gradient with nn
             for _ in range(P_epochs):
