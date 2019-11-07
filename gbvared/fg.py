@@ -56,7 +56,7 @@ class ControlVariate:
 
 
 def f(z):
-    return torch.sin(z ** 1.9) + 9.8 + z * 2.27
+    return torch.sin(z) + 9.8 + z * 2.27
 
 
 batch_size = 4000
@@ -66,7 +66,7 @@ std = 1
 
 cv = ControlVariate()
 mse = nn.MSELoss()
-use_cv = 1.0
+use_cv = 0.0
 
 expectations = []
 variances = []
@@ -79,11 +79,13 @@ print('Start experiment: use control variate <{}>'.format('Yes' if use_cv > 0 el
 for i in range(indices):
     score = (z - mu) / (std ** 2)
 
+    loss = None
     if use_cv > 0:
         # find functional gradient
         phi_value, phi_grad = cv.get_value(z)
         estimator = score * (f(z) - phi_value) + phi_grad
         fg = (-2 * (estimator * (phi_grad - score))).detach()
+        # fg = -(2 * estimator * (- score)).detach()
 
         # boosting
         phi = Phi(1, 48, 1)
@@ -95,7 +97,7 @@ for i in range(indices):
             loss.backward()
             optim.step()
 
-        cv.add_phi(phi, 0.005)
+        cv.add_phi(phi, 0.002)
 
     # evaluate stats for new cv
     phi_value, phi_grad = cv.get_value(z)
@@ -104,7 +106,7 @@ for i in range(indices):
     expectation = estimator.mean()
     variance = (estimator ** 2).mean() - expectation ** 2
 
-    print('Update {}: mean<{}> var<{}>'.format(i, expectation, variance))
+    print('Update {}: mean<{}> var<{}> phi_loss<{}>'.format(i, expectation, variance, loss))
 
     variances.append(variance)
     expectations.append(expectation)
