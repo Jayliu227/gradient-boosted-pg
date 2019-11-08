@@ -6,6 +6,7 @@ torch.random.manual_seed(12345)
 
 
 class Phi(nn.Module):
+    """Base phi function"""
     def __init__(self, input_dim, hidden_dim, output_dim):
         super(Phi, self).__init__()
         self.layer = nn.Sequential(
@@ -21,6 +22,7 @@ class Phi(nn.Module):
 
 
 class ZeroPhi(nn.Module):
+    """Base phi function that always outputs 0"""
     def __init__(self):
         super(ZeroPhi, self).__init__()
         pass
@@ -30,6 +32,7 @@ class ZeroPhi(nn.Module):
 
 
 class ControlVariate:
+    """Phi wrapper class that can calculate value and gradient"""
     def __init__(self):
         self.phis = [ZeroPhi()]
         self.weights = [1.0]
@@ -56,27 +59,61 @@ class ControlVariate:
 
 
 def f(z):
+    """Target function whose gradient of expectation we intend to evaluate"""
     return torch.sin(z) + 9.8 + z * 2.27
 
 
 batch_size = 4000
+# number of updates for boosting
 indices = 20
+# z ~ N(mu, std)
 mu = 2
 std = 1
 
 cv = ControlVariate()
 mse = nn.MSELoss()
-use_cv = 0.0
+# whether to use control variate or not
+use_cv = 1.0
+# FitQ method used in stein's paper
+baseline = True
 
 expectations = []
 variances = []
 
-# z ~ N(mu, std)
+# sample z
 z = mu + torch.randn(batch_size, 1) * std
 
 print('Start experiment: use control variate <{}>'.format('Yes' if use_cv > 0 else 'No'))
 
+if baseline:
+    """FitQ: surrogate loss is the mse between the target function and the phi function"""
+    phi = Phi(1, 48, 1)
+    optim = torch.optim.Adam(phi.parameters(), lr=0.001, betas=(0.9, 0.999))
+
+    fz = f(z)
+    loss = None
+
+    for _ in range(5000):
+        phi_value = phi.forward(z)
+        loss = mse(phi_value, fz)
+        optim.zero_grad()
+        loss.backward()
+        optim.step()
+
+    score = (z - mu) / (std ** 2)
+    wrap = ControlVariate()
+    wrap.add_phi(phi, 1.0)
+    phi_value, phi_grad = wrap.get_value(z)
+    estimator = score * (fz - phi_value) + phi_grad
+
+    expectation = estimator.mean()
+    variance = (estimator ** 2).mean() - expectation ** 2
+
+    print('Baseline FitQ: mean<{}> var<{}> phi_loss<{}>'.format(expectation, variance, loss))
+
+
 for i in range(indices):
+    """gradient boosting functional gradient descent"""
     score = (z - mu) / (std ** 2)
 
     loss = None
@@ -84,8 +121,20 @@ for i in range(indices):
         # find functional gradient
         phi_value, phi_grad = cv.get_value(z)
         estimator = score * (f(z) - phi_value) + phi_grad
-        fg = (-2 * (estimator * (phi_grad - score))).detach()
-        # fg = -(2 * estimator * (- score)).detach()
+
+        version = "Full"
+
+        if version == "Full":
+            # assume the hessian equals to the derivative
+            fg = (-2 * (estimator * (phi_grad - score))).detach()
+        elif version == "Half":
+            # assume the hessian is always zero
+            fg = (-2 * (estimator * - score)).detach()
+        elif version == "None":
+            # directly optimize the estimator (only for comparison)
+            fg = estimator.detach()
+        else:
+            raise NotImplementedError
 
         # boosting
         phi = Phi(1, 48, 1)
